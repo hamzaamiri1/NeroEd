@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
@@ -60,8 +60,34 @@ class NotesRequest(BaseModel):
     format: str = "bullet"
 
 
+def process_embeddings_background(session_id: str, chunks: list[str]):
+    try:
+        session = get_session(session_id)
+        embeddings = []
+        total = len(chunks)
+        if total == 0:
+            session["status"] = "ready"
+            session["progress"] = 100
+            return
+            
+        for i, chunk in enumerate(chunks):
+            chunk_emb = embed(chunk)
+            embeddings.append(chunk_emb)
+            progress = int(((i + 1) / total) * 100)
+            session["chunk_embeddings"] = embeddings
+            session["progress"] = progress
+            
+        session["status"] = "ready"
+    except Exception as exc:
+        try:
+            session = get_session(session_id)
+            session["status"] = "error"
+            session["error_detail"] = str(exc)
+        except KeyError:
+            pass
+
 @app.post("/upload")
-async def upload_document(file: UploadFile = File(...)) -> dict:
+async def upload_document(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     file_bytes = await file.read()
 
     try:
@@ -70,19 +96,34 @@ async def upload_document(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     chunks = chunk_text(document_text)
-    try:
-        chunk_embeddings = [embed(chunk) for chunk in chunks]
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    session_id = create_session(document_text, chunks, chunk_embeddings)
+    
+    session_id = create_session(document_text, chunks)
+    background_tasks.add_task(process_embeddings_background, session_id, chunks)
 
-    return {"session_id": session_id, "chunk_count": len(chunks)}
+    return JSONResponse(
+        status_code=202,
+        content={"session_id": session_id, "chunk_count": len(chunks)}
+    )
+
+@app.get("/status/{session_id}")
+async def get_status(session_id: str):
+    try:
+        session = get_session(session_id)
+        return {
+            "status": session.get("status", "embedding"),
+            "progress": session.get("progress", 0),
+            "error_detail": session.get("error_detail", None)
+        }
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found")
 
 
 @app.post("/chat")
 async def chat_endpoint(req: ChatRequest):
     try:
         session = get_session(req.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document depends are still indexing")
     except KeyError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -220,6 +261,8 @@ These excerpts were retrieved using hybrid semantic + keyword search, so they ar
 async def summarize_document(request: SummarizeRequest) -> dict:
     try:
         session = get_session(request.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document still indexing")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Session not found") from exc
 
@@ -248,6 +291,8 @@ async def remove_session(session_id: str) -> dict:
 async def flashcards_endpoint(req: SummarizeRequest):
     try:
         session = get_session(req.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document still indexing")
         cards = generate_flashcards(session["document_text"])
         return {"flashcards": cards, "count": len(cards)}
     except KeyError:
@@ -260,6 +305,8 @@ async def flashcards_endpoint(req: SummarizeRequest):
 async def quiz_endpoint(req: QuizRequest):
     try:
         session = get_session(req.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document still indexing")
         questions = generate_quiz(session["document_text"], req.difficulty)
         return {"questions": questions, "count": len(questions), "difficulty": req.difficulty}
     except KeyError:
@@ -272,6 +319,8 @@ async def quiz_endpoint(req: QuizRequest):
 async def notes_endpoint(req: NotesRequest):
     try:
         session = get_session(req.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document still indexing")
         notes = generate_notes(session["document_text"], req.format)
         return {"notes": notes, "format": req.format}
     except KeyError:
@@ -284,6 +333,8 @@ async def notes_endpoint(req: NotesRequest):
 async def formulas_endpoint(req: SummarizeRequest):
     try:
         session = get_session(req.session_id)
+        if session.get("status") != "ready":
+            raise HTTPException(status_code=400, detail="Document still indexing")
         formulas = extract_formulas(session["document_text"])
         return {"formulas": formulas, "count": len(formulas)}
     except KeyError:

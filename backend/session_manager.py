@@ -6,15 +6,16 @@ sessions: dict[str, dict] = {}
 def create_session(
     document_text: str,
     chunks: list[str],
-    chunk_embeddings: list[list[float]],
 ) -> str:
     """Create and store a new session, returning its ID."""
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
         "document_text": document_text,
         "chunks": chunks,
-        "chunk_embeddings": chunk_embeddings,
+        "chunk_embeddings": [],
         "chat_history": [],
+        "status": "embedding",
+        "progress": 0,
     }
     return session_id
 
