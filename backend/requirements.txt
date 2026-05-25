@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+httpx
+PyMuPDF
+python-docx
+python-multipart
+numpy
+rank_bm25
+sentence-transformers

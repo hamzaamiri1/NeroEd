@@ -1,0 +1,29 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "backend:uvicorn",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"cd /d backend && uvicorn main:app --reload"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "frontend:next-dev",
+			"type": "shell",
+			"command": "cmd",
+			"args": [
+				"/c",
+				"cd /d frontend && npm run dev"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}
